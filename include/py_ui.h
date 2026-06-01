@@ -997,6 +997,372 @@ public:
         return 0;
     }
 
+    // Resolves CContainerFrame::FrameProc via assertion anchoring.
+    // Uses FindAssertion on the exact (file, message, line) tuple to avoid
+    // ambiguity. ToFunctionStart walks back <=0x210 bytes.
+    static uint32_t ResolveContainerFrameProc()
+    {
+        static uint32_t cached_proc = 0;
+        if (cached_proc)
+            return cached_proc;
+
+        uintptr_t assertion_addr = 0;
+        try {
+            assertion_addr = GW::Scanner::FindAssertion(
+                "UiPlacementContainer.cpp", "itemFrame", 0x43, 0);
+        } catch (...) {
+            assertion_addr = 0;
+        }
+
+        if (!assertion_addr) {
+            GWCA_ERR("[SCAN] ResolveContainerFrameProc — FindAssertion failed");
+            return 0;
+        }
+
+        const uintptr_t proc_addr = GW::Scanner::ToFunctionStart(assertion_addr, 0x210);
+
+        if (!proc_addr) {
+            GWCA_ERR("[SCAN] ResolveContainerFrameProc — ToFunctionStart failed");
+            return 0;
+        }
+
+        cached_proc = static_cast<uint32_t>(proc_addr);
+        Logger::AssertAddress("CContainerFrame::FrameProc", cached_proc, "UIModule");
+        return cached_proc;
+    }
+
+    // Creates a minimal container window using CContainerFrame::FrameProc.
+    // anchor_flags=0x6 = horizontal (0x2) + vertical (0x4) anchor.
+    static uint32_t CreateContainerWindow(
+        float x, float y, float width, float height,
+        const std::wstring& frame_label = L"",
+        uint32_t parent_frame_id = 9,
+        uint32_t child_index = 0,
+        uint32_t frame_flags = 0,
+        uintptr_t create_param = 0,
+        uint32_t anchor_flags = 0x6)
+    {
+        const uint32_t callback = ResolveContainerFrameProc();
+        if (!callback) {
+            GWCA_ERR("[UI] CreateContainerWindow — proc resolution failed");
+            return 0;
+        }
+
+        const uint32_t resolved_child_index = child_index > 0
+            ? child_index
+            : FindAvailableChildSlot(parent_frame_id);
+        if (!resolved_child_index) {
+            GWCA_ERR("[UI] CreateContainerWindow — no child slot available");
+            return 0;
+        }
+
+        const uint32_t frame_id = CreateWindowByFrameId(
+            parent_frame_id, resolved_child_index, callback,
+            x, y, width, height,
+            frame_flags, create_param, frame_label, anchor_flags);
+        if (!frame_id) {
+            GWCA_ERR("[UI] CreateContainerWindow — CreateWindowByFrameId failed");
+            return 0;
+        }
+
+        ProcessFrameControllerUpdateByFrameId(frame_id);
+        return frame_id;
+    }
+
+    static constexpr uint32_t DEFAULT_SUBCLASS_FLAGS_COMPOSITE_ROOT = 0x59;
+
+    // Resolves Ui_CompositeRootControlProc via two-layer strategy:
+    //   1. Primary:   FindAssertion on the unique assertion inside CRProc
+    //                 ("UiCtlDlg.cpp", "!s_imgList", 0, 0) — line 0 for portability
+    //   2. Fallback:  Byte-pattern scan: SUB ESP,0x120 + stack cookie + register pushes
+    // All paths validate the resolved address via prologue check (55 8B EC 81 EC 20 01 00 00).
+    // No hardcoded addresses — all resolution is pattern/string-based at runtime.
+    static uint32_t ResolveCompositeRootControlProc()
+    {
+        static uint32_t cached_proc = 0;
+        if (cached_proc)
+            return cached_proc;
+
+        // Strategy 1: FindAssertion — most robust against EXE patches
+        {
+            uintptr_t addr = 0;
+            try {
+                addr = GW::Scanner::FindAssertion(
+                    "\\Code\\Gw\\Ui\\Controls\\UiCtlDlg.cpp", "!s_imgList", 0, 0);
+            } catch (...) {
+                addr = 0;
+            }
+            if (addr) {
+                const uintptr_t fn_start = GW::Scanner::ToFunctionStart(addr, 0x110);
+                if (fn_start) {
+                    const uint8_t* ptr = reinterpret_cast<const uint8_t*>(fn_start);
+                    if (GW::Scanner::IsValidPtr(fn_start, GW::ScannerSection::Section_TEXT) &&
+                        ptr[0] == 0x55 && ptr[1] == 0x8B && ptr[2] == 0xEC &&
+                        ptr[3] == 0x81 && ptr[4] == 0xEC &&
+                        ptr[5] == 0x20 && ptr[6] == 0x01 &&
+                        ptr[7] == 0x00 && ptr[8] == 0x00) {
+                        cached_proc = static_cast<uint32_t>(fn_start);
+                        Logger::AssertAddress("Ui_CompositeRootControlProc", cached_proc, "UIModule");
+                        return cached_proc;
+                    }
+                    GWCA_ERR("[SCAN] ResolveCompositeRootControlProc — assertion resolved 0x%08X but prologue validation failed (bytes: %02X %02X %02X %02X %02X %02X %02X %02X %02X)",
+                        fn_start, ptr[0], ptr[1], ptr[2], ptr[3], ptr[4], ptr[5], ptr[6], ptr[7], ptr[8]);
+                }
+            }
+        }
+
+        // Strategy 2: Byte-pattern scan — SUB ESP,0x120 + stack cookie + register pushes
+        {
+            uintptr_t proc_addr = GW::Scanner::Find(
+                "\x81\xEC\x20\x01\x00\x00\xA1\x00\x00\x00\x00\x33\xC5\x89\x45\xFC\x8B\x45\x10\x53\x56\x8B\x75\x08",
+                "xxxxxx????xxxxxxxxxxxxxx");
+            if (proc_addr) {
+                const uintptr_t fn_start = GW::Scanner::ToFunctionStart(proc_addr, 0x110);
+                if (fn_start) {
+                    const uint8_t* ptr = reinterpret_cast<const uint8_t*>(fn_start);
+                    if (GW::Scanner::IsValidPtr(fn_start, GW::ScannerSection::Section_TEXT) &&
+                        ptr[0] == 0x55 && ptr[1] == 0x8B && ptr[2] == 0xEC &&
+                        ptr[3] == 0x81 && ptr[4] == 0xEC &&
+                        ptr[5] == 0x20 && ptr[6] == 0x01 &&
+                        ptr[7] == 0x00 && ptr[8] == 0x00) {
+                        cached_proc = static_cast<uint32_t>(fn_start);
+                        Logger::AssertAddress("Ui_CompositeRootControlProc", cached_proc, "UIModule");
+                        return cached_proc;
+                    }
+                    GWCA_ERR("[SCAN] ResolveCompositeRootControlProc — byte pattern resolved 0x%08X but prologue validation failed (bytes: %02X %02X %02X %02X %02X %02X %02X %02X %02X)",
+                        fn_start, ptr[0], ptr[1], ptr[2], ptr[3], ptr[4], ptr[5], ptr[6], ptr[7], ptr[8]);
+                }
+            }
+        }
+
+        // Strategy 3: Removed — no hardcoded addresses. Resolution must use
+        // FindAssertion or byte-pattern scans only.
+
+        GWCA_ERR("[SCAN] ResolveCompositeRootControlProc — all strategies failed");
+        return 0;
+    }
+
+    // Resolves FrameNewSubclass (Ui_AttachCurrentHandlerSlot) via assertion scan.
+    static uint32_t ResolveFrameNewSubclass()
+    {
+        static uint32_t cached_proc = 0;
+        if (cached_proc)
+            return cached_proc;
+
+        uintptr_t addr = 0;
+        try {
+            addr = GW::Scanner::FindAssertion(
+                "\\Code\\Engine\\Frame\\FrApi.cpp", "frameId", 0x467, 0);
+        } catch (...) {
+            addr = 0;
+        }
+        if (addr) {
+            const uintptr_t fn_start = GW::Scanner::ToFunctionStart(addr, 0x100);
+            if (fn_start) {
+                cached_proc = static_cast<uint32_t>(fn_start);
+                Logger::AssertAddress("Ui_AttachCurrentHandlerSlot", cached_proc, "UIModule");
+                return cached_proc;
+            }
+        }
+
+        uintptr_t proc_addr = GW::Scanner::Find(
+            "\xFF\x75\x10\x8B\xF0\x8B\xCF\xFF\x75\x0C\x56",
+            "xxxxxxxxxxx");
+        if (!proc_addr) {
+            GWCA_ERR("[SCAN] ResolveFrameNewSubclass — both assertion and byte pattern failed");
+            return 0;
+        }
+        const uintptr_t fn_start = GW::Scanner::ToFunctionStart(proc_addr, 0x100);
+        if (!fn_start) {
+            GWCA_ERR("[SCAN] ResolveFrameNewSubclass — ToFunctionStart failed");
+            return 0;
+        }
+        cached_proc = static_cast<uint32_t>(fn_start);
+        Logger::AssertAddress("Ui_AttachCurrentHandlerSlot", cached_proc, "UIModule");
+        return cached_proc;
+    }
+
+    // Resolves FrameMouseEnable (WASM alias; EXE: Ui_UpdateFrameFlagMaskById).
+    static uint32_t ResolveFrameMouseEnable()
+    {
+        static uint32_t cached_proc = 0;
+        if (cached_proc)
+            return cached_proc;
+
+        uintptr_t addr = 0;
+        try {
+            addr = GW::Scanner::FindAssertion(
+                "\\Code\\Engine\\Frame\\FrApi.cpp", "frameId", 0x540, 0);
+        } catch (...) {
+            addr = 0;
+        }
+        if (addr) {
+            const uintptr_t fn_start = GW::Scanner::ToFunctionStart(addr, 0x100);
+            if (fn_start) {
+                cached_proc = static_cast<uint32_t>(fn_start);
+                Logger::AssertAddress("FrameMouseEnable", cached_proc, "UIModule");
+                return cached_proc;
+            }
+        }
+
+        uintptr_t proc_addr = GW::Scanner::Find(
+            "\x8D\x88\x94\x00\x00\x00\xFF\x75\x10\xFF\x75\x0C",
+            "xxx???xxxxxx");
+        if (!proc_addr) {
+            GWCA_ERR("[SCAN] ResolveFrameMouseEnable — both assertion and byte pattern failed");
+            return 0;
+        }
+        const uintptr_t fn_start = GW::Scanner::ToFunctionStart(proc_addr, 0x100);
+        if (!fn_start) {
+            GWCA_ERR("[SCAN] ResolveFrameMouseEnable — ToFunctionStart failed");
+            return 0;
+        }
+        cached_proc = static_cast<uint32_t>(fn_start);
+        Logger::AssertAddress("FrameMouseEnable", cached_proc, "UIModule");
+        return cached_proc;
+    }
+
+    // NOTE: Returns true based on GameThread::Enqueue success, NOT on lambda execution
+    // success. The lambda silently fails if any resolved function pointer is null, or if
+    // the frame is destroyed between enqueue and execution. This is acceptable for POC
+    // usage since the lambda's operations (subclass, mouse enable, title set, layout,
+    // show, redraw) are best-effort chrome installation.
+    // Installs the composite root control subclass on a frame, then sets title,
+    // lays out, shows, and redraws — all in a single game-thread lambda.
+    static bool AttachCompositeRootToFrame(
+        uint32_t frame_id,
+        const std::wstring& title = std::wstring(),
+        uint32_t subclass_flags = DEFAULT_SUBCLASS_FLAGS_COMPOSITE_ROOT)
+    {
+        using FrameNewSubclass_pt = void*(__cdecl*)(uint32_t, void*, void*);
+        using FrameMouseEnable_pt = void(__cdecl*)(uint32_t, uint32_t, uint32_t);
+        using CreateEncodedText_pt = uintptr_t(__cdecl*)(uint32_t, uint32_t, const wchar_t*, uint32_t);
+        using SetFrameText_pt = void(__cdecl*)(uint32_t, uintptr_t);
+        using ProcessFrameControllerUpdateById_pt = void(__cdecl*)(uint32_t);
+
+        static FrameNewSubclass_pt subclass_fn = nullptr;
+        if (!subclass_fn) {
+            subclass_fn = reinterpret_cast<FrameNewSubclass_pt>(ResolveFrameNewSubclass());
+            if (!subclass_fn) return false;
+        }
+
+        const uint32_t proc = ResolveCompositeRootControlProc();
+        if (!proc) return false;
+
+        GW::UI::Frame* frame = GW::UI::GetFrameById(frame_id);
+        if (!(frame && frame->IsCreated())) return false;
+
+        static CreateEncodedText_pt create_text_fn = nullptr;
+        static SetFrameText_pt set_frame_text_fn = nullptr;
+        {
+            const auto ct_addr = GW::Scanner::Find(
+                "\x55\x8B\xEC\x51\x56\x57\xE8\x00\x00\x00\x00\x8B\x48\x18\xE8\x00\x00\x00\x00\x8B\xF8",
+                "xxxxxxx????xxxx????xx");
+            if (ct_addr) {
+                create_text_fn = reinterpret_cast<CreateEncodedText_pt>(ct_addr);
+            }
+
+            auto st_addr = GW::Scanner::Find(
+                "\x55\x8B\xEC\x53\x56\x57\x8B\x7D\x08\x8B\xF7\xF7\xDE\x1B\xF6\x85",
+                "xxxxxxxxxxxxxxxx");
+            if (st_addr) {
+                st_addr = GW::Scanner::ToFunctionStart(st_addr, 0x100);
+                if (st_addr)
+                    set_frame_text_fn = reinterpret_cast<SetFrameText_pt>(st_addr);
+            }
+        }
+
+        static ProcessFrameControllerUpdateById_pt layout_fn = nullptr;
+        static bool layout_scan_attempted = false;
+        if (!layout_scan_attempted) {
+            layout_scan_attempted = true;
+            auto use_addr = GW::Scanner::Find("\xe8\x00\x00\x00\x00\x5d\xc3", "x????xx");
+            if (use_addr) {
+                const auto func_addr = GW::Scanner::ToFunctionStart(use_addr, 0x80);
+                if (func_addr)
+                    layout_fn = reinterpret_cast<ProcessFrameControllerUpdateById_pt>(func_addr);
+            }
+        }
+
+        static FrameMouseEnable_pt mouse_enable_fn = nullptr;
+        static bool me_scan_attempted = false;
+        if (!me_scan_attempted) {
+            me_scan_attempted = true;
+            const auto me_addr = ResolveFrameMouseEnable();
+            if (me_addr)
+                mouse_enable_fn = reinterpret_cast<FrameMouseEnable_pt>(me_addr);
+        }
+
+        const uint32_t target_fid = frame_id;
+        const uint32_t target_proc = proc;
+        const uint32_t target_flags = subclass_flags;
+        const std::wstring target_title = title;
+        const auto s_fn = subclass_fn;
+        const auto ct_fn = create_text_fn;
+        const auto st_fn = set_frame_text_fn;
+        const auto lt_fn = layout_fn;
+        const auto me_fn = mouse_enable_fn;
+        GW::GameThread::Enqueue([target_fid, target_proc, target_flags, target_title,
+                                 s_fn, ct_fn, st_fn, lt_fn, me_fn]() {
+            s_fn(target_fid, reinterpret_cast<void*>(target_proc),
+                 reinterpret_cast<void*>(static_cast<uintptr_t>(target_flags)));
+
+            if (me_fn) {
+                me_fn(target_fid, 0xFFFFFFFF, 0);
+            }
+
+            if (!target_title.empty() && ct_fn && st_fn) {
+                const uintptr_t payload = ct_fn(8, 7, target_title.c_str(), 0);
+                if (payload) {
+                    st_fn(target_fid, payload);
+                }
+            }
+
+            GW::UI::Frame* f = GW::UI::GetFrameById(target_fid);
+            if (f && f->IsCreated()) {
+                if (lt_fn)
+                    lt_fn(target_fid);
+                GW::UI::ShowFrame(f, true);
+                GW::UI::TriggerFrameRedraw(f);
+            }
+        });
+        return true;
+    }
+
+    // Creates a titled container window with proper chrome (title bar, resize handles,
+    // close button) via CreateContainerWindow + FrameNewSubclass(Ui_CompositeRootControlProc).
+    static uint32_t CreateTitledContainerWindow(
+        float x, float y, float width, float height,
+        const std::wstring& title = L"",
+        uint32_t parent_frame_id = 9,
+        uint32_t child_index = 0,
+        uint32_t frame_flags = 0,
+        uintptr_t create_param = 0,
+        uint32_t anchor_flags = 0x6,
+        uint32_t subclass_flags = DEFAULT_SUBCLASS_FLAGS_COMPOSITE_ROOT)
+    {
+        const uint32_t frame_id = CreateContainerWindow(
+            x, y, width, height, title,
+            parent_frame_id, child_index, frame_flags, create_param, anchor_flags);
+
+        if (!frame_id) {
+            GWCA_ERR("[UI] CreateTitledContainerWindow — CreateContainerWindow failed");
+            return 0;
+        }
+
+        if (!AttachCompositeRootToFrame(frame_id, title, subclass_flags)) {
+            GWCA_ERR("[UI] CreateTitledContainerWindow — AttachCompositeRootToFrame failed, frame_id=%u", frame_id);
+            GW::GameThread::Enqueue([frame_id]() {
+                GW::UI::Frame* f = GW::UI::GetFrameById(frame_id);
+                if (f && f->IsCreated()) {
+                    GW::UI::DestroyUIComponent(f);
+                }
+            });
+            return 0;
+        }
+        return frame_id;
+    }
+
     // Ensures that the DevText specimen window exists and reports whether it was opened here.
     static std::pair<uint32_t, bool> EnsureDevTextSource()
     {
@@ -1468,16 +1834,16 @@ public:
         static SetFrameText_pt set_frame_text_fn = nullptr;
         if (!create_text_fn) {
             const auto addr = GW::Scanner::Find(
-                "\x55\x8B\xEC\x8B\x45\x10\x53\x56\x57\x8B\x7D\x0C\x85\xFF\x74\x00",
-                "xxxxxxxxxxxxxxx?");
+                "\x55\x8B\xEC\x51\x56\x57\xE8\x00\x00\x00\x00\x8B\x48\x18\xE8\x00\x00\x00\x00\x8B\xF8",
+                "xxxxxxx????xxxx????xx");
             if (!addr)
                 return false;
             create_text_fn = reinterpret_cast<CreateEncodedText_pt>(addr);
         }
         if (!set_frame_text_fn) {
             const auto addr = GW::Scanner::Find(
-                "\x55\x8B\xEC\x56\x8B\x75\x08\x85\xF6\x74\x00\xFF\x76\x24",
-                "xxxxxxxxxx?xxx");
+                "\x55\x8B\xEC\x53\x56\x57\x8B\x7D\x08\x8B\xF7\xF7\xDE\x1B\xF6\x85",
+                "xxxxxxxxxxxxxxxx");
             if (!addr)
                 return false;
             set_frame_text_fn = reinterpret_cast<SetFrameText_pt>(addr);
