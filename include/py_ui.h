@@ -419,7 +419,7 @@ namespace UIManagerTitleHook {
     }
 }
 
-// === UIManagerDialogTitle — Dialog Descriptor Table Hijack (Vector A) ===
+// ============================================================================
 // UIManagerDialogTitle — Dialog Descriptor Table Hijack (Vector A)
 // ============================================================================
 // Strategy B (Recommended): Hook Ui_CreateEncodedTextFromStringId (18-byte thunk)
@@ -641,6 +641,21 @@ struct FramePositionWrapper {
 
     float viewport_scale_x;
     float viewport_scale_y;
+};
+
+// Coord2f and Rect4f match the native game types used by FrameSetPosition,
+// FrameSetSize, and FrameGetClientBorder.  Coord2f is 8 bytes ({float x; float y});
+// Rect4f is 16 bytes ({float top; float left; float right; float bottom}).
+struct Coord2f {
+    float x;
+    float y;
+};
+
+struct Rect4f {
+    float top;
+    float left;
+    float right;
+    float bottom;
 };
 
 struct FrameRelationWrapper {
@@ -1331,7 +1346,7 @@ public:
             x, y, width, height,
             frame_flags, create_param, frame_label, anchor_flags);
         if (!frame_id) {
-            GWCA_ERR("[UI] CreateContainerWindow — CreateWindowByFrameId failed");
+            GWCA_ERR("[UI] _create_container_window — CreateWindowByFrameId failed");
             return 0;
         }
 
@@ -1492,6 +1507,136 @@ public:
         return cached_proc;
     }
 
+    // ── Window Creation Pipeline Polish (2026-06-03) ──────────────────────
+    // Three new resolvers derived from the FrApi.cpp assertion-anchoring
+    // technique.  Each targets a unique assertion (file + "frameId" + line
+    // number) inside FrApi.cpp, then walks back to the function prologue.
+
+    // Resolves FrameSetLayer (EXE 0x0062f5a0) — sets a frame's Z-layer.
+    // WASM: FrameSetLayer(unsigned int, int) @ ram:809b060f
+    // Assertion: FrApi.cpp, "frameId", line 0xbfb
+    static uint32_t ResolveFrameSetLayer()
+    {
+        static uint32_t cached_proc = 0;
+        if (cached_proc)
+            return cached_proc;
+
+        uintptr_t addr = 0;
+        try {
+            addr = GW::Scanner::FindAssertion(
+                "\\Code\\Engine\\Frame\\FrApi.cpp", "frameId", 0xbfb, 0);
+        } catch (...) {
+            addr = 0;
+        }
+        if (addr) {
+            const uintptr_t fn_start = GW::Scanner::ToFunctionStart(addr, 0x100);
+            if (fn_start) {
+                cached_proc = static_cast<uint32_t>(fn_start);
+                Logger::AssertAddress("FrameSetLayer", cached_proc, "UIModule");
+                return cached_proc;
+            }
+        }
+
+        GWCA_ERR("[SCAN] ResolveFrameSetLayer — assertion not found");
+        return 0;
+    }
+
+    // Resolves FrameSetPosition(Coord2f const&) (EXE 0x0062f7f0).
+    // WASM: FrameSetPosition(unsigned int, Coord2f const&) @ ram:809a97bb
+    // Assertion: FrApi.cpp, "frameId", line 0x85c
+    // Takes a frameId + pointer to {float x, float y} (8 bytes).
+    static uint32_t ResolveFrameSetPositionCoord2f()
+    {
+        static uint32_t cached_proc = 0;
+        if (cached_proc)
+            return cached_proc;
+
+        uintptr_t addr = 0;
+        try {
+            addr = GW::Scanner::FindAssertion(
+                "\\Code\\Engine\\Frame\\FrApi.cpp", "frameId", 0x85c, 0);
+        } catch (...) {
+            addr = 0;
+        }
+        if (addr) {
+            const uintptr_t fn_start = GW::Scanner::ToFunctionStart(addr, 0x100);
+            if (fn_start) {
+                cached_proc = static_cast<uint32_t>(fn_start);
+                Logger::AssertAddress("FrameSetPosition(Coord2f)", cached_proc, "UIModule");
+                return cached_proc;
+            }
+        }
+
+        GWCA_ERR("[SCAN] ResolveFrameSetPositionCoord2f — assertion not found");
+        return 0;
+    }
+
+    // Resolves FrameGetClientBorder (EXE 0x0062D000).
+    // WASM: FrameGetClientBorder(unsigned int) @ ram:809a8164
+    // Assertion: FrApi.cpp, "frameId", line 0x7dd
+    // Prototype: Rect4f*(Rect4f* out, uint frameId)
+    static uint32_t ResolveFrameGetClientBorder()
+    {
+        static uint32_t cached_proc = 0;
+        if (cached_proc)
+            return cached_proc;
+
+        uintptr_t addr = 0;
+        try {
+            addr = GW::Scanner::FindAssertion(
+                "\\Code\\Engine\\Frame\\FrApi.cpp", "frameId", 0x7dd, 0);
+        } catch (...) {
+            addr = 0;
+        }
+        if (addr) {
+            const uintptr_t fn_start = GW::Scanner::ToFunctionStart(addr, 0x100);
+            if (fn_start) {
+                cached_proc = static_cast<uint32_t>(fn_start);
+                Logger::AssertAddress("FrameGetClientBorder", cached_proc, "UIModule");
+                return cached_proc;
+            }
+        }
+
+        GWCA_ERR("[SCAN] ResolveFrameGetClientBorder — assertion not found");
+        return 0;
+    }
+
+    // Resolves FrameActivate (EXE 0x0062b000) — brings window to front and sets
+    // up the click-to-raise popup mechanism.  Tail-calls CRelation::Activate().
+    // WASM: FrameActivate(unsigned int) @ ram:809b0e7f
+    // Assertion: FrApi.cpp, "frameId", line 0xC3E
+    // Prologue: 55 8B EC 8B 45 08 85 C0
+    static uint32_t ResolveFrameActivate()
+    {
+        static uint32_t cached_proc = 0;
+        if (cached_proc)
+            return cached_proc;
+
+        uintptr_t addr = 0;
+        try {
+            addr = GW::Scanner::FindAssertion(
+                "\\Code\\Engine\\Frame\\FrApi.cpp", "frameId", 0xC3E, 0);
+        } catch (...) {
+            addr = 0;
+        }
+        if (addr) {
+            const uintptr_t fn_start = GW::Scanner::ToFunctionStart(addr, 0x80);
+            if (fn_start) {
+                const uint8_t* ptr = reinterpret_cast<const uint8_t*>(fn_start);
+                if (ptr && ptr[0] == 0x55 && ptr[1] == 0x8B && ptr[2] == 0xEC &&
+                    ptr[3] == 0x8B && ptr[4] == 0x45 && ptr[5] == 0x08 &&
+                    ptr[6] == 0x85 && ptr[7] == 0xC0) {
+                    cached_proc = static_cast<uint32_t>(fn_start);
+                    Logger::AssertAddress("FrameActivate", cached_proc, "UIModule");
+                    return cached_proc;
+                }
+            }
+        }
+
+        GWCA_ERR("[SCAN] ResolveFrameActivate — assertion not found");
+        return 0;
+    }
+
     // Resolves Ui_InvalidateFrameContent (WASM: FrameContentInvalidate) via byte-pattern scan.
     // Pattern: 8D 48 04 53 6A 04 E8 (at +0x57 from function start).
     // Offset -0x57 applied to locate the function prologue.
@@ -1527,11 +1672,20 @@ public:
     // usage since the lambda's operations (subclass, mouse enable, title set, layout,
     // show, redraw) are best-effort chrome installation.
     // Installs the composite root control subclass on a frame, then sets title,
-    // lays out, shows, and redraws — all in a single game-thread lambda.
+    // applies position override, sets Z-layer, and shows/redraws — all in a single
+    // game-thread lambda.
+    //
+    // 2026-06-03 — Window Polish: Added position_x, position_y, layer parameters.
+    // FrameSetPosition(Coord2f) overrides the anchor-system positioning to prevent
+    // the UiGenerateFramePositionLockFlags centering drift.  FrameSetLayer sets a
+    // unique Z-layer to prevent z-fighting between co-planar windows.
     static bool AttachCompositeRootToFrame(
         uint32_t frame_id,
         const std::wstring& title = std::wstring(),
-        uint32_t subclass_flags = DEFAULT_SUBCLASS_FLAGS_COMPOSITE_ROOT)
+        uint32_t subclass_flags = DEFAULT_SUBCLASS_FLAGS_COMPOSITE_ROOT,
+        float position_x = 0.0f,
+        float position_y = 0.0f,
+        int layer = 0)
     {
         using FrameNewSubclass_pt = void*(__cdecl*)(uint32_t, void*, void*);
         using FrameMouseEnable_pt = void(__cdecl*)(uint32_t, uint32_t, uint32_t);
@@ -1548,10 +1702,6 @@ public:
         GW::UI::Frame* frame = GW::UI::GetFrameById(frame_id);
         if (!(frame && frame->IsCreated())) return false;
 
-            }
-
-        static bool layout_scan_attempted = false;
-        if (!layout_scan_attempted) {
         // Shared resolver — deduplicates CreateEncodedText + DevText walk.
         static SetFrameTextResolved resolved;
         ResolveSetFrameText(resolved);
@@ -1565,22 +1715,59 @@ public:
                 mouse_enable_fn = reinterpret_cast<FrameMouseEnable_pt>(me_addr);
         }
 
+        // ★ NEW — Window Polish resolvers (2026-06-03)
+        using FrameSetPositionCoord2f_pt = void(__cdecl*)(uint32_t, Coord2f*);
+        using FrameSetLayer_pt = void(__cdecl*)(uint32_t, int);
+        using FrameActivate_pt = void(__cdecl*)(uint32_t);
+
+        static FrameSetPositionCoord2f_pt frame_set_pos_fn = nullptr;
+        if (!frame_set_pos_fn) {
+            const auto addr = ResolveFrameSetPositionCoord2f();
+            if (addr)
+                frame_set_pos_fn = reinterpret_cast<FrameSetPositionCoord2f_pt>(addr);
+        }
+
+        static FrameSetLayer_pt frame_set_layer_fn = nullptr;
+        if (!frame_set_layer_fn) {
+            const auto addr = ResolveFrameSetLayer();
+            if (addr)
+                frame_set_layer_fn = reinterpret_cast<FrameSetLayer_pt>(addr);
+        }
+
+        // ★ FrameActivate — bring-to-front / click-to-raise (2026-06-03)
+        static FrameActivate_pt frame_activate_fn = nullptr;
+        if (!frame_activate_fn) {
+            const auto addr = ResolveFrameActivate();
+            if (addr)
+                frame_activate_fn = reinterpret_cast<FrameActivate_pt>(addr);
+        }
+
         const uint32_t target_fid = frame_id;
         const uint32_t target_proc = proc;
         const uint32_t target_flags = subclass_flags;
         const std::wstring target_title = title;
         const auto s_fn = subclass_fn;
         const auto ct_fn = resolved.create_text_fn;
+        const auto st_fn = resolved.set_frame_text_fn;
         const auto me_fn = mouse_enable_fn;
+        const auto pos_fn = frame_set_pos_fn;
+        const auto lay_fn = frame_set_layer_fn;
+        const auto act_fn = frame_activate_fn;
+        const float px = position_x;
+        const float py = position_y;
+        const int alayer = layer;
         GW::GameThread::Enqueue([target_fid, target_proc, target_flags, target_title,
-                                 s_fn, ct_fn, st_fn, me_fn]() {
+                                 s_fn, ct_fn, st_fn, me_fn, pos_fn, lay_fn, act_fn, px, py, alayer]() {
+            // 1. FrameNewSubclass — attach CRProc
             s_fn(target_fid, reinterpret_cast<void*>(target_proc),
                  reinterpret_cast<void*>(static_cast<uintptr_t>(target_flags)));
 
+            // 2. FrameMouseEnable — enable mouse input
             if (me_fn) {
                 me_fn(target_fid, 0xFFFFFFFF, 0);
             }
 
+            // 3. Title set — CreateEncodedText → SetFrameText
             if (!target_title.empty() && ct_fn && st_fn) {
                 const uintptr_t payload = ct_fn(8, 7, target_title.c_str(), 0);
                 if (payload) {
@@ -1588,9 +1775,28 @@ public:
                 }
             }
 
+            // 4. ProcessFrameControllerUpdateByFrameId — apply anchor margins
+            UIManager::ProcessFrameControllerUpdateByFrameId(target_fid);
+
+            // 5. FrameSetPosition — override anchor positioning (bypass centering drift)
+            if (pos_fn) {
+                Coord2f pos = { px, py };
+                pos_fn(target_fid, &pos);
+            }
+
+            // 6. FrameSetLayer — set Z-layer (prevent z-fighting)
+            if (lay_fn) {
+                lay_fn(target_fid, alayer);
+            }
+
+            // 7. FrameActivate — bring to front / enable click-to-raise popup mechanism
+            if (act_fn) {
+                act_fn(target_fid);
+            }
+
+            // 8-9. ShowFrame + TriggerFrameRedraw
             GW::UI::Frame* f = GW::UI::GetFrameById(target_fid);
             if (f && f->IsCreated()) {
-                UIManager::ProcessFrameControllerUpdateByFrameId(target_fid);
                 GW::UI::ShowFrame(f, true);
                 GW::UI::TriggerFrameRedraw(f);
             }
@@ -1600,16 +1806,20 @@ public:
 
     // Creates a titled container window with proper chrome (title bar, resize handles,
     // close button) via _create_container_window + FrameNewSubclass(Ui_CompositeRootControlProc).
+    //
+    // 2026-06-03 — Window Polish: Added 'layer' parameter.  Passes x, y through to
+    // AttachCompositeRootToFrame for FrameSetPosition override (bypassing anchor drift).
+    static uint32_t CreateNativeWindow(
         float x, float y, float width, float height,
         const std::wstring& title = L"",
         uint32_t parent_frame_id = 9,
         uint32_t child_index = 0,
-        uint32_t frame_flags = 0,
+        uint32_t frame_flags = 0x20,
         uintptr_t create_param = 0,
         uint32_t anchor_flags = 0x6,
-        uint32_t subclass_flags = DEFAULT_SUBCLASS_FLAGS_COMPOSITE_ROOT)
+        uint32_t subclass_flags = DEFAULT_SUBCLASS_FLAGS_COMPOSITE_ROOT,
+        int layer = 0)
     {
-        const uint32_t frame_id = CreateContainerWindow(
         const uint32_t frame_id = _create_container_window(
             x, y, width, height, title,
             parent_frame_id, child_index, frame_flags, create_param, anchor_flags);
@@ -1619,7 +1829,7 @@ public:
             return 0;
         }
 
-        if (!AttachCompositeRootToFrame(frame_id, title, subclass_flags)) {
+        if (!AttachCompositeRootToFrame(frame_id, title, subclass_flags, x, y, layer)) {
             GWCA_ERR("[UI] CreateTitledContainerWindow — AttachCompositeRootToFrame failed, frame_id=%u", frame_id);
             GW::GameThread::Enqueue([frame_id]() {
                 GW::UI::Frame* f = GW::UI::GetFrameById(frame_id);
@@ -1630,6 +1840,29 @@ public:
             return 0;
         }
         return frame_id;
+    }
+
+    // ── Diagnostic: native FrameGetClientBorder (2026-06-03) ──────────
+    // Calls the raw EXE FrameGetClientBorder (0x0062D000) directly,
+    // bypassing the GWCA wrapper.  Useful for verifying chrome dimensions
+    // returned by the native msg-0x15 handler vs the GWCA cache.
+    // Returns Rect4f {top, left, right, bottom} in pixels.
+    static Rect4f GetFrameClientBorderNative(uint32_t frame_id)
+    {
+        using FrameGetClientBorder_pt = Rect4f*(__cdecl*)(uint32_t, Rect4f*);
+        static FrameGetClientBorder_pt fn = nullptr;
+        if (!fn) {
+            const auto addr = ResolveFrameGetClientBorder();
+            if (!addr) {
+                Rect4f zero = { 0.0f, 0.0f, 0.0f, 0.0f };
+                return zero;
+            }
+            fn = reinterpret_cast<FrameGetClientBorder_pt>(addr);
+        }
+
+        Rect4f out = { 0.0f, 0.0f, 0.0f, 0.0f };
+        fn(frame_id, &out);
+        return out;
     }
 
     // Ensures that the DevText specimen window exists and reports whether it was opened here.
@@ -2205,13 +2438,6 @@ public:
 
     static bool SetFrameTitleByFrameId(uint32_t frame_id, const std::wstring& title)
     {
-
-        if (!create_text_fn) {
-            // Wildcarded CALL displacements — matches 2 locations; first (lowest
-
-
-                const uintptr_t target = a + 5 + rel;
-
         static SetFrameTextResolved resolved;
         if (!ResolveSetFrameText(resolved))
             return false;

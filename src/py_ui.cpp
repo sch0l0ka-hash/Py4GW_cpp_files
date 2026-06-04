@@ -497,7 +497,10 @@ PYBIND11_EMBEDDED_MODULE(PyUIManager, m) {
 			&UIManager::AttachCompositeRootToFrame,
 			py::arg("frame_id"),
 			py::arg("title") = std::wstring(),
-			py::arg("subclass_flags") = 0x59
+			py::arg("subclass_flags") = 0x59,
+			py::arg("position_x") = 0.0f,
+			py::arg("position_y") = 0.0f,
+			py::arg("layer") = 0
 		)
 		.def_static("CreateNativeWindow",
 			&UIManager::CreateNativeWindow,
@@ -508,10 +511,11 @@ PYBIND11_EMBEDDED_MODULE(PyUIManager, m) {
 			py::arg("title") = std::wstring(),
 			py::arg("parent_frame_id") = 9,
 			py::arg("child_index") = 0,
-			py::arg("frame_flags") = 0,
+			py::arg("frame_flags") = 0x20,
 			py::arg("create_param") = 0,
 			py::arg("anchor_flags") = 0x6,
-			py::arg("subclass_flags") = 0x59
+			py::arg("subclass_flags") = 0x59,
+			py::arg("layer") = 0
 		)
 		.def_static("ensure_devtext_source",
 			&UIManager::EnsureDevTextSource
