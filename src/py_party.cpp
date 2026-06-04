@@ -439,6 +439,10 @@ void PyParty::UseHeroSkillInstant(uint32_t hero_id, uint32_t skill_slot, uint32_
 
 }
 
+bool PyParty::SetHeroSkillAIEnabled(uint32_t hero_agent_id, uint32_t skill_slot, bool enabled) {
+    return GW::PartyMgr::SetHeroSkillAIEnabled(hero_agent_id, skill_slot, enabled);
+}
+
 
 uintptr_t PyParty::GetPartyContextPtr() {
     return reinterpret_cast<uintptr_t>(GW::GetPartyContext());
@@ -593,6 +597,7 @@ void bind_PyParty(py::module_& m) {
         .def("GetPetInfo", &PyParty::GetPetInfo, py::arg("owner_agent_id")) // Bind GetPetInfo method
         .def("GetIsPlayerTicked", &PyParty::GetIsPlayerTicked)
 		.def("UseHeroSkill", &PyParty::UseHeroSkillInstant, py::arg("hero_id"), py::arg("skill_slot"), py::arg("target_id"))  // Bind UseHeroSkillInstant method
+        .def("SetHeroSkillAIEnabled", &PyParty::SetHeroSkillAIEnabled, py::arg("hero_agent_id"), py::arg("skill_slot"), py::arg("enabled"))
 		.def("GetPartyContextPtr", &PyParty::GetPartyContextPtr)  // Bind GetPartyContextPtr method
 
         // Bind public attributes (use snake_case)
